@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Copy, RefreshCw } from "lucide-react";
 import CustomAlert from "../components/CustomAlert";
+import { secureRandomInt } from "../core/vaultCrypto";
 
 export default function Generator() {
   // --- STATE ---
@@ -54,7 +55,7 @@ export default function Generator() {
 
     let generated = "";
     for (let i = 0; i < length; i++) {
-      const randomIndex = Math.floor(Math.random() * chars.length);
+      const randomIndex = secureRandomInt(chars.length);
       generated += chars[randomIndex];
     }
     setPassword(generated);

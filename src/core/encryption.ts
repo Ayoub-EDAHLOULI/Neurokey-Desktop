@@ -1,9 +1,7 @@
-import CryptoJS from "crypto-js";
 import { Store, load } from "@tauri-apps/plugin-store";
-import { v4 as uuidv4 } from "uuid";
 
-const ITERATIONS = 5000;
-const KEY_SIZE = 256 / 32;
+// Tauri store holding the vault file. Values written here are already encrypted
+// (see vaultCrypto.ts); this module only handles persistence.
 
 // Keep a single instance of the store in memory
 let _storeInstance: Store | null = null;
@@ -21,36 +19,6 @@ const getStore = async (): Promise<Store> => {
     }
   }
   return _storeInstance;
-};
-
-export const deriveKey = (password: string, salt: string): string => {
-  const key = CryptoJS.PBKDF2(password, salt, {
-    keySize: KEY_SIZE,
-    iterations: ITERATIONS,
-  });
-  return key.toString();
-};
-
-export const encryptData = (text: string, secretKey: string): string | null => {
-  try {
-    return CryptoJS.AES.encrypt(text, secretKey).toString();
-  } catch (error) {
-    console.error("Encryption Failed:", error);
-    return null;
-  }
-};
-
-export const decryptData = (
-  ciphertext: string,
-  secretKey: string,
-): string | null => {
-  try {
-    const bytes = CryptoJS.AES.decrypt(ciphertext, secretKey);
-    const originalText = bytes.toString(CryptoJS.enc.Utf8);
-    return originalText || null;
-  } catch (error) {
-    return null;
-  }
 };
 
 export const saveSecureItem = async (
@@ -94,8 +62,4 @@ export const clearSecureStore = async (): Promise<void> => {
   } catch (error) {
     console.error("Failed to clear secure store:", error);
   }
-};
-
-export const generateSalt = (): string => {
-  return uuidv4();
 };

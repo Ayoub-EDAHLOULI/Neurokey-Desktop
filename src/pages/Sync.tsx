@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Smartphone, Wifi, ShieldCheck, RefreshCw } from "lucide-react";
 import QRCode from "react-qr-code";
 import { useVaultStore, VaultItem } from "../store/useVaultStore";
+import { decrypt, encrypt, randomHex } from "../core/vaultCrypto";
 
 // THE SMART MERGE LOGIC
 const smartMerge = (localVault: VaultItem[], remoteVault: VaultItem[]) => {
@@ -30,51 +31,77 @@ const smartMerge = (localVault: VaultItem[], remoteVault: VaultItem[]) => {
 };
 
 export default function Sync() {
+  const [qrValue, setQrValue] = useState<string>("");
   const [connectionString, setConnectionString] = useState<string>("");
   const [isError, setIsError] = useState(false);
+  const [syncError, setSyncError] = useState("");
   const [syncSuccess, setSyncSuccess] = useState(false);
 
   const { setItems, items } = useVaultStore();
+  // Latest vault + current session key, readable from the event listener
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const sessionKeyRef = useRef<string | null>(null);
 
-  const fetchIpAddress = async () => {
+  /**
+   * Creates a one-time pairing session: a random id + 256-bit key go into the QR code
+   * (the key never crosses the network). The desktop vault is encrypted with that key
+   * before being handed to the Rust server.
+   */
+  const startSession = useCallback(async () => {
     try {
       setIsError(false);
-      const ip = await invoke<string>("get_sync_connection_string");
-      setConnectionString(ip);
+      setSyncError("");
+      setSyncSuccess(false);
+
+      const url = await invoke<string>("get_sync_connection_string");
+      const sid = randomHex(16);
+      const key = randomHex(32);
+      sessionKeyRef.current = key;
+
+      await invoke("start_sync_session", {
+        sid,
+        payload: encrypt(JSON.stringify(itemsRef.current), key),
+      });
+
+      setConnectionString(url);
+      setQrValue(JSON.stringify({ v: 2, url, sid, key }));
     } catch (error) {
       console.error(error);
       setIsError(true);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchIpAddress();
+    startSession();
 
-    // Seed Rust Memory Bank with current vault items on component mount
-    if (items) {
-      console.log(`Pushing ${items.length} items to Rust Memory Bank...`);
-      invoke("seed_desktop_vault", { vault: items })
-        .then(() => console.log("✅ Successfully seeded Rust Server!"))
-        .catch((err) => console.error("❌ Failed to seed Rust:", err));
-    }
+    // Phone payload arrives encrypted with the session key
+    const unlisten = listen<{ payload: string }>(
+      "vault-sync-received",
+      (event) => {
+        const key = sessionKeyRef.current;
+        const json = key ? decrypt(event.payload.payload, key) : null;
+        sessionKeyRef.current = null; // single use
 
-    // Listen for incoming vault data from mobile app
-    const unlisten = listen("vault-sync-received", (event: any) => {
-      console.log("Got data from mobile!", event.payload);
+        if (json === null) {
+          setSyncError("The phone's data could not be verified. Try again.");
+          return;
+        }
 
-      const mobileItems = event.payload.items;
-
-      if (mobileItems && Array.isArray(mobileItems)) {
-        const mergedVault = smartMerge(items, mobileItems);
-        setItems(mergedVault); // Overwrite Zustand AND save securely
-        setSyncSuccess(true);
-      }
-    });
+        const mobileItems = JSON.parse(json);
+        if (Array.isArray(mobileItems)) {
+          setItems(smartMerge(itemsRef.current, mobileItems));
+          setSyncSuccess(true);
+        }
+      },
+    );
 
     return () => {
+      sessionKeyRef.current = null;
+      invoke("cancel_sync_session").catch(() => {});
       unlisten.then((f) => f());
     };
-  }, [items, setItems]);
+  }, [startSession, setItems]);
 
   return (
     <div className="h-full w-full flex flex-col px-8 pb-8">
@@ -89,10 +116,10 @@ export default function Sync() {
           </p>
         </div>
         <button
-          onClick={fetchIpAddress}
+          onClick={startSession}
           className="h-12 px-6 bg-inputBg hover:bg-border rounded-full flex items-center justify-center text-text font-bold transition-colors gap-2"
         >
-          <RefreshCw size={18} /> Refresh IP
+          <RefreshCw size={18} /> New QR Code
         </button>
       </div>
 
@@ -139,8 +166,8 @@ export default function Sync() {
                   3. Secure Transfer
                 </h3>
                 <p className="text-subText">
-                  Your data is encrypted end-to-end. It never touches the cloud
-                  or leaves your home network.
+                  Your vault is encrypted with a one-time key contained in the
+                  QR code. It never touches the cloud or leaves your network.
                 </p>
               </div>
             </div>
@@ -158,6 +185,19 @@ export default function Sync() {
                   Wi-Fi?
                 </p>
               </div>
+            ) : syncError ? (
+              <div className="text-center p-6">
+                <p className="text-danger font-bold text-lg mb-2">
+                  Sync Rejected
+                </p>
+                <p className="text-subText text-sm mb-4">{syncError}</p>
+                <button
+                  onClick={startSession}
+                  className="h-10 px-5 bg-inputBg hover:bg-border rounded-full text-text font-bold"
+                >
+                  Generate a new QR code
+                </button>
+              </div>
             ) : syncSuccess ? (
               <div className="text-center p-6 flex flex-col items-center animate-in fade-in zoom-in duration-500">
                 <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mb-4">
@@ -170,20 +210,21 @@ export default function Sync() {
                   Your desktop and mobile vaults are now identical.
                 </p>
               </div>
-            ) : connectionString ? (
+            ) : qrValue ? (
               <>
                 <div className="bg-white p-4 rounded-2xl mb-6 shadow-md">
                   <QRCode
-                    value={connectionString}
-                    size={200}
-                    level="H" // High error correction
+                    value={qrValue}
+                    size={220}
+                    level="M" // Payload is longer (session key); M keeps the code scannable
                   />
                 </div>
                 <p className="text-text font-mono font-bold tracking-widest bg-inputBg px-4 py-2 rounded-lg">
                   {connectionString}
                 </p>
                 <p className="text-subText text-xs mt-4 text-center max-w-[250px]">
-                  Waiting for mobile connection...
+                  Waiting for mobile connection… This code works once and
+                  expires in 5 minutes.
                 </p>
               </>
             ) : (

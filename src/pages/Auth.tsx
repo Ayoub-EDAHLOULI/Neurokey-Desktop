@@ -9,22 +9,18 @@ import {
   Fingerprint,
   ShieldAlert,
 } from "lucide-react";
+import { clearSecureStore } from "../core/encryption";
 import {
-  deriveKey,
-  encryptData,
-  decryptData,
-  saveSecureItem,
-  getSecureItem,
-  generateSalt,
-  clearSecureStore,
-  persistVault,
-} from "../core/encryption";
+  createVault,
+  getSavedEmail,
+  unlockWithPassword,
+} from "../core/vaultAuth";
 import { useVaultStore } from "../store/useVaultStore";
 import CustomAlert from "../components/CustomAlert";
 
 // Mocking the router navigate function for now
 export default function Auth({ onUnlock }: { onUnlock: () => void }) {
-  const { setItems, clearVault } = useVaultStore();
+  const { loadVault, clearVault } = useVaultStore();
   const [mode, setMode] = useState<0 | 1>(0); // 0 = Login, 1 = Signup
   const [isLoading, setIsLoading] = useState(true);
 
@@ -53,7 +49,7 @@ export default function Auth({ onUnlock }: { onUnlock: () => void }) {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const savedEmail = await getSecureItem("user_email");
+        const savedEmail = await getSavedEmail();
         if (savedEmail) {
           setFormData((prev) => ({ ...prev, email: savedEmail }));
           setMode(0);
@@ -107,49 +103,36 @@ export default function Auth({ onUnlock }: { onUnlock: () => void }) {
     // Run field validation before hitting the encryption logic
     if (!validate()) return;
 
-    if (mode === 1) {
-      setIsLoading(true);
-      const salt = generateSalt();
-      const key = deriveKey(formData.password, salt);
-      const token = encryptData("VALID_TOKEN", key);
-
-      if (token) {
-        await saveSecureItem("user_email", formData.email);
-        await saveSecureItem("vault_salt", salt);
-        await saveSecureItem("vault_validation", token);
-        await saveSecureItem("vault_data", JSON.stringify([])); // Create an empty vault array
-        await persistVault();
-
-        setItems([]); // Ensure RAM is empty
+    setIsLoading(true);
+    try {
+      if (mode === 1) {
+        const key = await createVault(formData.email, formData.password);
+        await loadVault(key); // creates an empty, encrypted vault
         onUnlock();
+        return;
       }
-    } else {
-      setIsLoading(true);
-      const salt = await getSecureItem("vault_salt");
-      const token = await getSecureItem("vault_validation");
 
-      if (!salt || !token) {
-        setIsLoading(false);
+      if (!(await getSavedEmail())) {
         return setErrors({ general: "No vault found on this device." });
       }
 
-      const key = deriveKey(formData.password, salt);
-      const decrypted = decryptData(token, key);
-
-      if (decrypted === "VALID_TOKEN") {
-        // Load the passwords from the hard drive into RAM!
-        const savedData = await getSecureItem("vault_data");
-        if (savedData) {
-          setItems(JSON.parse(savedData));
-        } else {
-          setItems([]);
-        }
-
-        onUnlock();
-      } else {
-        setIsLoading(false);
-        setErrors({ general: "Incorrect Master Password." });
+      const key = await unlockWithPassword(formData.password);
+      if (!key) {
+        return setErrors({ general: "Incorrect Master Password." });
       }
+
+      if (!(await loadVault(key))) {
+        return setErrors({
+          general: "Your vault file could not be decrypted on this device.",
+        });
+      }
+
+      onUnlock();
+    } catch (error) {
+      console.error("Unlock failed:", error);
+      setErrors({ general: "Something went wrong. Please try again." });
+    } finally {
+      setIsLoading(false);
     }
   };
 

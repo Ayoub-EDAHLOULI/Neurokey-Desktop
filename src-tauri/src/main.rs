@@ -1,86 +1,154 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use axum::{extract::State, routing::{get, post}, Json, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+    Json, Router,
+};
 use local_ip_address::local_ip;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use tower_http::cors::CorsLayer;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-// 1. Create a thread-safe storage for the Desktop's vault
-struct SharedVault(Arc<Mutex<Value>>);
+const SYNC_PORT: u16 = 8080;
+/// A QR code is only valid for a few minutes, and for a single sync.
+const SESSION_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// One pairing session, created when the Sync screen shows a QR code.
+///
+/// The Rust side never sees vault plaintext or the session key: React encrypts the
+/// desktop vault with the key embedded in the QR code and hands us an opaque blob.
+/// The phone proves it scanned the QR by sending the session id, and its payload is
+/// encrypted + authenticated with the same key (checked again in React).
+struct SyncSession {
+    sid: String,
+    desktop_payload: String,
+    expires_at: Instant,
+}
+
+type SharedSession = Arc<Mutex<Option<SyncSession>>>;
+struct SyncState(SharedSession);
 
 #[tauri::command]
 fn get_sync_connection_string() -> Result<String, String> {
     match local_ip() {
-        Ok(ip) => Ok(format!("http://{}:8080", ip)),
+        Ok(ip) => Ok(format!("http://{}:{}", ip, SYNC_PORT)),
         Err(e) => Err(format!("Could not get local IP: {}", e)),
     }
 }
 
-// 2. React calls this right before showing the QR code to seed the memory bank
+/// React calls this right before showing a QR code.
 #[tauri::command]
-fn seed_desktop_vault(vault: Value, state: tauri::State<SharedVault>) {
-    let mut v = state.0.lock().unwrap();
-    *v = vault;
+fn start_sync_session(sid: String, payload: String, state: tauri::State<SyncState>) {
+    *state.0.lock().unwrap() = Some(SyncSession {
+        sid,
+        desktop_payload: payload,
+        expires_at: Instant::now() + SESSION_TTL,
+    });
 }
 
-// 3. UPDATED: Receives mobile data AND returns desktop data!
+/// Called when the Sync screen closes: no QR on screen means nobody can sync.
+#[tauri::command]
+fn cancel_sync_session(state: tauri::State<SyncState>) {
+    *state.0.lock().unwrap() = None;
+}
+
+/// Compares secrets without exiting early on the first differing byte.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[derive(Deserialize)]
+struct SyncRequest {
+    payload: String,
+}
+
 async fn handle_sync_data(
-    State((app, vault_mutex)): State<(AppHandle, Arc<Mutex<Value>>)>,
-    Json(mobile_payload): Json<Value>,
-) -> Json<Value> {
-    // Grab the Desktop vault from memory
-    let desktop_vault = vault_mutex.lock().unwrap().clone();
-    
-    // Emit the Mobile vault to React so the desktop can merge it
-    println!("Received sync payload from mobile!");
-    app.emit("vault-sync-received", mobile_payload).unwrap();
-    
-    // Return the Desktop vault to the Mobile app!
-    Json(json!({ 
-        "status": "success", 
-        "message": "Data transferred securely.",
-        "desktop_items": desktop_vault 
-    }))
+    State((app, session)): State<(AppHandle, SharedSession)>,
+    headers: HeaderMap,
+    Json(body): Json<SyncRequest>,
+) -> (StatusCode, Json<Value>) {
+    let presented = headers
+        .get("x-neurokey-session")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // Take the session out: it can be used exactly once.
+    let active = {
+        let mut guard = session.lock().unwrap();
+        match guard.as_ref() {
+            Some(s)
+                if Instant::now() < s.expires_at
+                    && constant_time_eq(s.sid.as_bytes(), presented.as_bytes()) =>
+            {
+                guard.take()
+            }
+            _ => None,
+        }
+    };
+
+    let Some(active) = active else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "status": "error", "message": "No active sync session." })),
+        );
+    };
+
+    // React decrypts and verifies the phone's payload with the session key.
+    let _ = app.emit("vault-sync-received", json!({ "payload": body.payload }));
+
+    (
+        StatusCode::OK,
+        Json(json!({ "status": "success", "payload": active.desktop_payload })),
+    )
 }
 
-// 4. The Local Background Server
-async fn start_local_server(app_handle: AppHandle, shared_vault: Arc<Mutex<Value>>) {
+/// Local network server. Without an active session (QR on screen) it rejects every sync.
+/// No CORS layer on purpose: web pages in a browser must not be able to call it.
+async fn start_local_server(app_handle: AppHandle, session: SharedSession) {
     let app = Router::new()
-        .route("/ping", get(|| async { 
-            Json(json!({ "status": "NeuroKey Desktop is ready!", "device": "Desktop" })) 
-        }))
+        .route(
+            "/ping",
+            get(|| async { Json(json!({ "status": "NeuroKey Desktop is ready!" })) }),
+        )
         .route("/sync", post(handle_sync_data))
-        .with_state((app_handle, shared_vault)) // Pass both app handle and vault memory
-        .layer(CorsLayer::permissive());
+        .with_state((app_handle, session));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!("Sync server listening on {}", addr);
-    
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let addr = SocketAddr::from(([0, 0, 0, 0], SYNC_PORT));
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => {
+            println!("Sync server listening on {}", addr);
+            if let Err(e) = axum::serve(listener, app).await {
+                eprintln!("Sync server stopped: {}", e);
+            }
+        }
+        Err(e) => eprintln!("Could not start sync server on {}: {}", addr, e),
+    }
 }
 
 fn main() {
-    // Initialize the empty memory bank
-    let shared_vault = Arc::new(Mutex::new(json!([])));
+    let session: SharedSession = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::new().build())
-        .manage(SharedVault(shared_vault.clone())) // Give Tauri access to it
+        .manage(SyncState(session.clone()))
         .setup(|app| {
             let app_handle = app.handle().clone();
-            // Spin up the Axum server in a background thread
             tauri::async_runtime::spawn(async move {
-                start_local_server(app_handle, shared_vault).await;
+                start_local_server(app_handle, session).await;
             });
             Ok(())
         })
-        // Make sure seed_desktop_vault is registered here!
-        .invoke_handler(tauri::generate_handler![get_sync_connection_string, seed_desktop_vault])
+        .invoke_handler(tauri::generate_handler![
+            get_sync_connection_string,
+            start_sync_session,
+            cancel_sync_session
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
