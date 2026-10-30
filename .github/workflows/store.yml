@@ -1,0 +1,59 @@
+# Builds the unsigned MSIX for the Microsoft Store.
+# Runs on every v* tag, or manually from the Actions tab.
+name: Store MSIX
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - name: Build Store exe
+        env:
+          VITE_STORE_BUILD: "true"
+        run: npx tauri build --features store --no-bundle
+
+      - name: Stage package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory msix-staging | Out-Null
+          Copy-Item src-tauri\target\release\neurokey-desktop.exe msix-staging\
+          Copy-Item Assets msix-staging\Assets -Recurse
+          $v = (Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json).version
+          (Get-Content Package.appxmanifest -Raw) `
+            -replace '(<Identity[^>]*Version=")[^"]*"', "`${1}$v.0`"" |
+            Set-Content msix-staging\AppxManifest.xml -Encoding utf8
+          "MSIX_VERSION=$v.0" >> $env:GITHUB_ENV
+
+      - name: Pack MSIX (Windows SDK)
+        shell: pwsh
+        run: |
+          $sdk = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64" |
+                 Sort-Object Name -Descending | Select-Object -First 1
+          & "$($sdk.FullName)\makepri.exe" createconfig /cf priconfig.xml /dq en-US /pv 10.0.0 /o
+          & "$($sdk.FullName)\makepri.exe" new /pr msix-staging /cf priconfig.xml /mn msix-staging\AppxManifest.xml /of msix-staging\resources.pri /o
+          & "$($sdk.FullName)\makeappx.exe" pack /d msix-staging /p "NeuroKey_${env:MSIX_VERSION}_x64.msix" /o
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neurokey-msix
+          path: NeuroKey_*_x64.msix
