@@ -98,11 +98,21 @@ jobs:
       - name: Pack MSIX (Windows SDK)
         shell: pwsh
         run: |
-          $sdk = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64" |
-                 Sort-Object Name -Descending | Select-Object -First 1
-          & "$($sdk.FullName)\makepri.exe" createconfig /cf priconfig.xml /dq en-US /pv 10.0.0 /o
-          & "$($sdk.FullName)\makepri.exe" new /pr msix-staging /cf priconfig.xml /mn msix-staging\AppxManifest.xml /of msix-staging\resources.pri /o
-          & "$($sdk.FullName)\makeappx.exe" pack /d msix-staging /p "NeuroKey_${env:MSIX_VERSION}_x64.msix" /o
+          # Fail the step if makepri/makeappx exit with an error
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          # Newest installed SDK that actually ships both tools. Sort the version
+          # folders (10.0.x.y) as versions: old SDKs like 10.0.14393 lack makepri.
+          $sdk = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\10.*" -Directory |
+                 Where-Object { (Test-Path "$($_.FullName)\x64\makepri.exe") -and (Test-Path "$($_.FullName)\x64\makeappx.exe") } |
+                 Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $sdk) { throw "No Windows SDK with makepri.exe and makeappx.exe found" }
+          $bin = "$($sdk.FullName)\x64"
+          Write-Host "Using Windows SDK $($sdk.Name)"
+
+          & "$bin\makepri.exe" createconfig /cf priconfig.xml /dq en-US /pv 10.0.0 /o
+          & "$bin\makepri.exe" new /pr msix-staging /cf priconfig.xml /mn msix-staging\AppxManifest.xml /of msix-staging\resources.pri /o
+          & "$bin\makeappx.exe" pack /d msix-staging /p "NeuroKey_${env:MSIX_VERSION}_x64.msix" /o
 
       # Unsigned on purpose: Microsoft signs it after Store certification.
       # Kept as a workflow artifact only; NOT attached to the GitHub release,
