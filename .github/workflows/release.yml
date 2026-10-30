@@ -53,3 +53,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
+          # Point the generic "windows-x86_64" fallback in latest.json at the
+          # NSIS setup.exe (what most users install) instead of the MSI
+          updaterJsonPreferNsis: true
