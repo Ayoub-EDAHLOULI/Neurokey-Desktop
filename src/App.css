@@ -62,4 +62,10 @@
     @apply text-text antialiased;
     user-select: none;
   }
+
+  /* Hide WebView2's built-in password reveal/clear buttons (we draw our own) */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
 }

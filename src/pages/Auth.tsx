@@ -6,7 +6,6 @@ import {
   Lock,
   Eye,
   EyeOff,
-  Fingerprint,
   ShieldAlert,
 } from "lucide-react";
 import { clearSecureStore } from "../core/encryption";
@@ -293,10 +292,7 @@ export default function Auth({ onUnlock }: { onUnlock: () => void }) {
           </form>
 
           {mode === 0 && (
-            <div className="mt-6 flex flex-col items-center gap-4">
-              <button className="text-primary hover:text-blue-400 transition-colors">
-                <Fingerprint size={36} />
-              </button>
+            <div className="mt-6 flex flex-col items-center">
               <button
                 onClick={handleWipeVault}
                 className="text-sm text-subText hover:text-danger transition-colors flex items-center gap-1"
