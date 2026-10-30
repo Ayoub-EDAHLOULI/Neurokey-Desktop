@@ -88,6 +88,7 @@ started by you, by scanning a QR code.
 - **Auto-lock** after 1, 5 or 15 minutes of inactivity (or never)
 - **Wipe all data** — permanently destroy the vault on this device
 - **Security tips** built right into the app
+- **Signed in-app updates** — install new versions in one click
 - **Custom frameless window** with a native feel
 
 </td>
@@ -177,13 +178,14 @@ shown on your screen — never sent across the network.
 
 ## 🌐 What Leaves Your Computer
 
-Honesty over marketing: NeuroKey has no server of its own, but two features
+Honesty over marketing: NeuroKey has no server of its own, but three features
 do reach the internet. Here is exactly what they send.
 
 | Feature | Goes to | What is sent | What is **never** sent |
 | --- | --- | --- | --- |
 | **Breach Radar** & per-entry breach check | `api.pwnedpasswords.com` (Have I Been Pwned) | The first **5 characters** of the password's SHA-1 hash. The check is completed locally. | Your password, or its full hash |
 | **Website icons** | Google's favicon service | The **domain name** of the website you saved (e.g. `github.com`) | Usernames, passwords, notes, cards |
+| **Update check** — once per launch after unlocking, or from **Settings → Check for Updates** | GitHub Releases (this repository) | A request for the latest version info (`latest.json`), plus the installer download when an update is installed. Every update is verified against NeuroKey's signing key before it's applied. | Anything from your vault |
 | **Device sync** | Your phone, on your local network only | Your vault, encrypted with a one-time key | Anything readable |
 
 Everything else — unlocking, encrypting, generating, searching, auto-lock —
@@ -293,7 +295,7 @@ src-tauri/
 - [ ] Secure notes
 - [ ] Encrypted export / import (backup)
 - [ ] Clipboard auto-clear
-- [ ] Optional offline mode (no favicons, no breach lookups)
+- [ ] Optional offline mode (no favicons, no breach lookups, no update checks)
 - [ ] Signed release builds · macOS & Linux packages
 
 </details>

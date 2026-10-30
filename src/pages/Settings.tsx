@@ -7,9 +7,12 @@ import {
   Star,
   Trash2,
   ChevronRight,
+  Download,
 } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useVaultStore } from "../store/useVaultStore";
 import { clearSecureStore } from "../core/encryption";
+import { checkForUpdate, installUpdate } from "../core/updater";
 import CustomAlert from "../components/CustomAlert";
 import { useNavigate } from "react-router-dom";
 
@@ -30,11 +33,75 @@ export default function Settings() {
   const closeAlert = () =>
     setAlertConfig((prev) => ({ ...prev, visible: false }));
 
+  const [appVersion, setAppVersion] = useState("");
+  // null = idle, otherwise the text shown in the update row
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+
   // Simulate loading settings
   useEffect(() => {
     const savedTime = localStorage.getItem("autoLockTime");
     if (savedTime) setAutoLockTime(savedTime);
+    getVersion().then(setAppVersion).catch(() => {});
   }, []);
+
+  const handleCheckForUpdates = async () => {
+    setUpdateStatus("Checking for Updates…");
+    try {
+      const update = await checkForUpdate();
+      setUpdateStatus(null);
+
+      if (!update) {
+        return setAlertConfig({
+          visible: true,
+          title: "You're Up to Date",
+          message: `NeuroKey ${appVersion} is the latest version.`,
+          type: "success",
+          buttons: [],
+        });
+      }
+
+      setAlertConfig({
+        visible: true,
+        title: "Update Available",
+        message: `Version ${update.version} is ready to install. NeuroKey will restart when it's done.`,
+        type: "info",
+        buttons: [
+          { text: "Later", style: "cancel" },
+          {
+            text: "Install",
+            onPress: async () => {
+              setUpdateStatus("Downloading… 0%");
+              try {
+                await installUpdate(update, (p) =>
+                  setUpdateStatus(`Downloading… ${p}%`),
+                );
+              } catch (e) {
+                console.error("Update failed:", e);
+                setUpdateStatus(null);
+                setAlertConfig({
+                  visible: true,
+                  title: "Update Failed",
+                  message: "The update could not be installed. Try again later.",
+                  type: "error",
+                  buttons: [],
+                });
+              }
+            },
+          },
+        ],
+      });
+    } catch (e) {
+      console.error("Update check failed:", e);
+      setUpdateStatus(null);
+      setAlertConfig({
+        visible: true,
+        title: "Couldn't Check for Updates",
+        message: "Make sure you're connected to the internet and try again.",
+        type: "error",
+        buttons: [],
+      });
+    }
+  };
 
   const handleAutoLockChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -171,6 +238,13 @@ export default function Settings() {
                 onClick={() => navigate("/settings/about")}
               />
               <SettingRow
+                icon={Download}
+                color="bg-blue-500"
+                label={updateStatus ?? "Check for Updates"}
+                onClick={handleCheckForUpdates}
+                disabled={updateStatus !== null}
+              />
+              <SettingRow
                 icon={Star}
                 color="bg-yellow-500"
                 label="Leave a Review"
@@ -202,7 +276,7 @@ export default function Settings() {
               />
             </div>
             <p className="text-center text-subText text-sm mt-6 font-mono">
-              NeuroKey v1.0.0 (Desktop)
+              NeuroKey {appVersion && `v${appVersion} `}(Desktop)
             </p>
           </section>
         </div>

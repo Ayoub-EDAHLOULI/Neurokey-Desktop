@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "NeuroKey",
-  "version": "0.1.0",
-  "identifier": "com.a.neurokey-desktop",
+  "version": "0.2.0",
+  "identifier": "app.neurokey.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "neurokey-desktop",
+        "title": "NeuroKey",
         "width": 1124,
         "height": 768,
         "minWidth": 800,
@@ -26,6 +26,7 @@
     }
   },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
     "icon": [
@@ -35,5 +36,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQyQTg4NzU3Nzc0QTlBRTEKUldUaG1rcDNWNGVvUXN5MUM2MVAyZ2gvblkyczF2eWRJR1F5dENLNU9xNm9KeFJNK3R6aTlGWlgK",
+      "endpoints": [
+        "https://github.com/Ayoub-EDAHLOULI/Neurokey-Desktop/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

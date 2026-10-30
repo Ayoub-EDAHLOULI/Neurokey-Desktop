@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const SYNC_PORT: u16 = 8080;
 /// A QR code is only valid for a few minutes, and for a single sync.
@@ -131,13 +131,41 @@ async fn start_local_server(app_handle: AppHandle, session: SharedSession) {
     }
 }
 
+/// The app identifier changed from `com.a.neurokey-desktop` to `app.neurokey.desktop`,
+/// which moves the app data folder. Bring an existing vault over before the store loads it.
+fn migrate_old_vault(app: &AppHandle) {
+    let Ok(new_dir) = app.path().app_data_dir() else { return };
+    let Some(parent) = new_dir.parent() else { return };
+    let old_file = parent.join("com.a.neurokey-desktop").join("neurokey_secure.dat");
+    let new_file = new_dir.join("neurokey_secure.dat");
+
+    if !old_file.exists() || new_file.exists() {
+        return;
+    }
+
+    // Copy, don't move: the old file stays as a backup.
+    // Copy to a temp file first so a half-written vault is never picked up.
+    let tmp_file = new_dir.join("neurokey_secure.dat.migrating");
+    let result = std::fs::create_dir_all(&new_dir)
+        .and_then(|_| std::fs::copy(&old_file, &tmp_file))
+        .and_then(|_| std::fs::rename(&tmp_file, &new_file));
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&tmp_file);
+        eprintln!("Vault migration from {} failed: {}", old_file.display(), e);
+    }
+}
+
 fn main() {
     let session: SharedSession = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .manage(SyncState(session.clone()))
         .setup(|app| {
+            migrate_old_vault(app.handle());
+
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 start_local_server(app_handle, session).await;

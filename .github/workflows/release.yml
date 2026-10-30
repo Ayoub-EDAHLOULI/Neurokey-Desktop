@@ -1,0 +1,55 @@
+# Builds, signs and uploads a NeuroKey release, including the latest.json
+# file the in-app updater reads.
+#
+# Release a new version:
+#   1. Bump "version" in src-tauri/tauri.conf.json (and package.json / Cargo.toml)
+#   2. Commit, then: git tag v0.2.0 && git push origin v0.2.0
+#   3. Review the draft release on GitHub and click "Publish release"
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           contents of the updater private key file
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (leave empty if none)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: NeuroKey Desktop v__VERSION__
+          releaseBody: See the README for what's new and what leaves your computer.
+          # Draft first so you can review the notes and files before users get it
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true

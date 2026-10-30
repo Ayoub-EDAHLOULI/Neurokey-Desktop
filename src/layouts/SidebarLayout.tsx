@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import TitleBar from "../components/TitleBar";
+import UpdatePrompt from "../components/UpdatePrompt";
 
 export default function SidebarLayout({
   children,
@@ -51,6 +52,8 @@ export default function SidebarLayout({
             label="Device Sync"
           />
         </nav>
+
+        <UpdatePrompt />
 
         <div className="p-3 border-t border-border">
           <NavItem
