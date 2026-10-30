@@ -13,6 +13,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useVaultStore } from "../store/useVaultStore";
 import { clearSecureStore } from "../core/encryption";
 import { checkForUpdate, installUpdate } from "../core/updater";
+import { IS_STORE_BUILD } from "../core/buildInfo";
 import CustomAlert from "../components/CustomAlert";
 import { useNavigate } from "react-router-dom";
 
@@ -170,7 +171,7 @@ export default function Settings() {
         </select>
       ) : type === "danger" ? (
         <span className="text-danger font-bold text-sm">WIPE</span>
-      ) : (
+      ) : type === "static" ? null : (
         <ChevronRight size={20} className="text-subText" />
       )}
     </div>
@@ -237,13 +238,22 @@ export default function Settings() {
                 label="Developer Team"
                 onClick={() => navigate("/settings/about")}
               />
-              <SettingRow
-                icon={Download}
-                color="bg-blue-500"
-                label={updateStatus ?? "Check for Updates"}
-                onClick={handleCheckForUpdates}
-                disabled={updateStatus !== null}
-              />
+              {IS_STORE_BUILD ? (
+                <SettingRow
+                  icon={Download}
+                  color="bg-blue-500"
+                  label="Updates are delivered through the Microsoft Store"
+                  type="static"
+                />
+              ) : (
+                <SettingRow
+                  icon={Download}
+                  color="bg-blue-500"
+                  label={updateStatus ?? "Check for Updates"}
+                  onClick={handleCheckForUpdates}
+                  disabled={updateStatus !== null}
+                />
+              )}
               <SettingRow
                 icon={Star}
                 color="bg-yellow-500"

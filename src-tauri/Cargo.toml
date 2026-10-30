@@ -1,6 +1,6 @@
 [package]
 name = "neurokey-desktop"
-version = "0.2.1"
+version = "0.2.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -30,4 +30,8 @@ tauri-plugin-process = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2.14"
+
+[features]
+# Microsoft Store build: the Store delivers updates, so the in-app updater is disabled
+store = []
 

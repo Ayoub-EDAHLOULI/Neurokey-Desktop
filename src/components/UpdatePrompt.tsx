@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Download, X } from "lucide-react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate, installUpdate } from "../core/updater";
+import { IS_STORE_BUILD } from "../core/buildInfo";
 
 // Check once per app launch, not every time the vault is unlocked
 let startupCheckDone = false;
@@ -13,7 +14,7 @@ export default function UpdatePrompt() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (startupCheckDone) return;
+    if (IS_STORE_BUILD || startupCheckDone) return;
     startupCheckDone = true;
 
     // Wait a moment so the check doesn't compete with unlocking the vault

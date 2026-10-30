@@ -158,11 +158,16 @@ fn migrate_old_vault(app: &AppHandle) {
 fn main() {
     let session: SharedSession = Arc::new(Mutex::new(None));
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .manage(SyncState(session.clone()))
+        .manage(SyncState(session.clone()));
+
+    // Microsoft Store builds are updated by the Store, not by the in-app updater
+    #[cfg(not(feature = "store"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .setup(|app| {
             migrate_old_vault(app.handle());
 
